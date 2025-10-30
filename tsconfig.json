@@ -1,0 +1,47 @@
+{
+  "compilerOptions": {
+    "module": "esnext",
+    "target": "es2020",
+    "jsx": "preserve",
+    "sourceMap": false,
+    "experimentalDecorators": true,
+    "incremental": true,
+    "removeComments": true,
+    "esModuleInterop": true,
+    "moduleResolution": "bundler",
+    "baseUrl": "src",
+    "lib": [
+      "dom",
+      "es2015",
+      "es2017",
+      "es2020"
+    ],
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "allowJs": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "noEmit": false,
+    "plugins": [
+      {
+        "name": "next"
+      }
+    ]
+  },
+  "exclude": [
+    "node_modules",
+    "out",
+    ".next",
+    "test",
+    "src/server"
+  ],
+  "include": [
+    "**/*.ts",
+    "**/*.tsx",
+    "next-env.d.ts",
+    ".next/types/**/*.ts"
+  ]
+}

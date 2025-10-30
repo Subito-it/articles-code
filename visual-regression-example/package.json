@@ -1,0 +1,17 @@
+{
+  "name": "example-visual-regression",
+  "version": "0.1.0",
+  "main": "index.js",
+  "author": "Alessandro Grosselle",
+  "license": "UNLICENSED",
+  "private": true,
+  "scripts": {
+    "test:visual:stage": "TEST_TYPE=visual TARGET_ENV=stage playwright test --reporter=html --project='Desktop Chrome' --project='Android Chrome'",
+    "test:visual:stage:update": "TEST_TYPE=visual TARGET_ENV=stage playwright test --update-snapshots --reporter=html --project='Desktop Chrome' --project='Android Chrome'",
+    "test:visual:stage:ui": "TEST_TYPE=visual TARGET_ENV=stage playwright test --ui"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.56.1",
+    "typescript": "^5.9.2"
+  }
+}
