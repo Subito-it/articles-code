@@ -1,0 +1,437 @@
+name: 'Visual Regression Test'
+
+concurrency:
+  group: ${{ github.repository }}-${{ github.workflow }}
+  cancel-in-progress: true
+
+on:
+  workflow_call:
+
+jobs:
+  get-version:
+    name: 'Get Playwright version'
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.playwright-version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: 'Get installed Playwright version'
+        id: 'playwright-version'
+        run: |
+          version=$(jq -r '.devDependencies["@playwright/test"] // empty' package.json | sed 's/^[^0-9]*//')
+          if [[ -z "$version" ]]; then
+            echo "❌ Playwright version not found"
+            exit 1
+          fi
+          echo "✅ Playwright version: $version"
+          echo "version=$version" >> $GITHUB_OUTPUT
+
+  visual-test:
+    needs: [ get-version ]
+    name: 'Visual Test'
+    runs-on: ubuntu-latest
+
+    container:
+      image: mcr.microsoft.com/playwright:v${{ needs.get-version.outputs.version }}-jammy
+
+    strategy:
+      fail-fast: false
+      matrix:
+        shardIndex: [ 1, 2, 3, 4 ]
+        shardTotal: [ 4 ]
+
+    steps:
+      - name: 'Install git-lfs'
+        run: |
+          apt-get update
+          apt-get install -y git-lfs
+
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      - name: 'Set up Node.js'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22.x'
+          cache: 'npm'
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 'Install jq'
+        run: apt-get update && apt-get install -y jq
+
+      - name: 'Trust GitHub Actions workspace'
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: 'Install dependencies'
+        run: npm ci --quiet --no-audit --no-fund
+
+      - name: 'Run visual tests and check for failures'
+        id: visual-test
+        shell: bash
+        run: |
+          npm run test:visual:stage -- --reporter=list,blob --shard=${{ matrix.shardIndex }}/${{ matrix.shardTotal }} || export TEST_EXIT_CODE=$?
+          if [[ -n "$TEST_EXIT_CODE" && "$TEST_EXIT_CODE" -ne 0 ]]; then
+            echo "UPDATE_NEEDED=true" >> $GITHUB_ENV
+          else
+            echo "UPDATE_NEEDED=false" >> $GITHUB_ENV
+          fi
+
+      - name: "Upload test results"
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: all-blob-reports
+          path: blob-report
+          retention-days: 1
+
+      - name: 'Update snapshots (if needed)'
+        if: env.UPDATE_NEEDED == 'true'
+        run: npm run test:visual:stage:update -- --shard=${{ matrix.shardIndex }}/${{ matrix.shardTotal }}
+
+      - name: 'Identify modified snapshots'
+        id: identify-changes
+        if: env.UPDATE_NEEDED == 'true'
+        run: |
+          # Identifies ONLY the PNG files that were actually modified by Git
+          MODIFIED_FILES=$(git status --porcelain test/visual/**/*.png | awk '{print $2}')
+          if [ -z "$MODIFIED_FILES" ]; then
+            echo "No modified snapshot files detected by Git."
+            echo "HAS_CHANGES=false" >> $GITHUB_OUTPUT
+          else
+            echo "Modified files to upload:"
+            echo "$MODIFIED_FILES"
+            echo "HAS_CHANGES=true" >> $GITHUB_OUTPUT
+            # Create a temporary directory to stage only modified files with their structure
+            mkdir -p staged-snapshots
+            for file in $MODIFIED_FILES; do
+              target_dir="staged-snapshots/$(dirname "$file")"
+              mkdir -p "$target_dir"
+              cp "$file" "staged-snapshots/$file"
+            done
+          fi
+
+      - name: 'Upload updated snapshots'
+        # Uploads an artifact only if modified files were found
+        if: steps.identify-changes.outputs.HAS_CHANGES == 'true'
+        uses: actions/upload-artifact@v3
+        with:
+          name: snapshots-${{ matrix.shardIndex }}
+          path: staged-snapshots/
+          retention-days: 1
+          if-no-files-found: warn
+
+  merge-reports:
+    needs: [ visual-test ]
+    # Merge reports even if some test shards have failed
+    if: always()
+    name: "Merge HTML Reports"
+    runs-on: [ "size/small" ]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v3
+        with:
+          name: all-blob-reports
+          path: all-blob-reports
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22.x"
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Merge into HTML Report
+        # Although the packages are not installed, npx will install Playwright on the fly
+        run: npx playwright merge-reports --reporter html ./all-blob-reports
+
+      - name: Upload HTML report
+        id: upload-report
+        uses: actions/upload-artifact@v3
+        with:
+          name: html-report--attempt-${{ github.run_attempt }}
+          path: playwright-report
+          retention-days: 1
+
+
+  merge-updates:
+    name: 'Merge Visual Snapshot Updates'
+    runs-on: ubuntu-latest
+    needs: visual-test
+    outputs:
+      pr_number: ${{ steps.manage-pr.outputs.pull-request-number }}
+      author_email: ${{ steps.author.outputs.email }}
+      update_detected: ${{ steps.check.outputs.update_detected }}
+      changes_committed: ${{ steps.manage-pr.outputs.changes-committed }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+      - name: 'Download all updated artifacts'
+        uses: actions/download-artifact@v3
+        with:
+          path: merged-updates
+
+      - name: 'Check if any updates were downloaded'
+        id: check
+        run: |
+          # Check if any PNG files exist in the downloaded artifacts
+          PNG_COUNT=$(find merged-updates -name "*.png" -type f 2>/dev/null | wc -l)
+          if [ "$PNG_COUNT" -eq 0 ]; then
+            echo "No PNG snapshot updates detected."
+            echo "update_detected=false" >> $GITHUB_OUTPUT
+          else
+            echo "Found $PNG_COUNT PNG snapshot files. Preparing PR."
+            echo "update_detected=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: 'Get author email'
+        id: author
+        if: steps.check.outputs.update_detected == 'true'
+        run: |
+          EMAIL=$(git log -1 --pretty=format:'%ae')
+          echo "Author email: $EMAIL"
+          echo "email=$EMAIL" >> $GITHUB_OUTPUT
+
+      - name: 'Complete PR Management'
+        if: steps.check.outputs.update_detected == 'true'
+        id: manage-pr
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            // Setup constants
+            const PR_BRANCH_NAME = "update-visual-snapshots";
+            const { exec: execCommand } = require('child_process');
+            const util = require('util');
+            const execAsync = util.promisify(execCommand);
+            
+            try {
+              console.log('Setting up Git configuration...');
+              await execAsync('git config user.name "github-actions"');
+              await execAsync('git config user.email "github-actions@github.com"');
+            
+              // 1. FIRST STEP: Clean up any existing PR and branch to start completely fresh
+              console.log('=== CLEANUP PHASE: Removing existing PR and branch ===');
+            
+              // Close any existing PR first
+              const { data: pullRequests } = await github.rest.pulls.list({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                state: 'open',
+                head: `${context.repo.owner}:${PR_BRANCH_NAME}`
+              });
+            
+              if (pullRequests.length > 0) {
+                for (const pr of pullRequests) {
+                  console.log(`Closing existing PR #${pr.number} to start fresh`);
+                  await github.rest.pulls.update({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    pull_number: pr.number,
+                    state: 'closed'
+                  });
+                }
+              } else {
+                console.log('No existing PR found to close.');
+              }
+            
+              // Delete existing branch if it exists (both local and remote)
+              console.log('Checking for existing branch to delete...');
+              const { stdout: remoteCheck } = await execAsync(`git ls-remote --heads origin ${PR_BRANCH_NAME}`).catch(() => ({ stdout: '' }));
+            
+              if (remoteCheck.trim()) {
+                console.log(`Remote branch ${PR_BRANCH_NAME} exists. Deleting it to start fresh.`);
+                try {
+                  await execAsync(`git push origin --delete ${PR_BRANCH_NAME}`);
+                  console.log('Remote branch deleted successfully.');
+                } catch (deleteError) {
+                  console.log('Remote branch deletion failed or branch already deleted:', deleteError.message);
+                }
+              } else {
+                console.log('No existing remote branch found to delete.');
+              }
+            
+              console.log('=== CLEANUP COMPLETE: Starting fresh workflow ===');
+            
+              // 3. Ensure we're on the base branch and create a fresh branch
+              console.log(`Creating fresh branch: ${PR_BRANCH_NAME}`);
+              await execAsync(`git checkout -b ${PR_BRANCH_NAME}`);
+            
+              // 4. Copy the modified snapshot files
+              console.log('Merging updated snapshots...');
+              await execAsync(`
+                for dir in merged-updates/snapshots-*; do
+                  if [ -d "$dir" ]; then
+                    echo "Processing directory: $dir";
+                    find "$dir" -name "*.png" -type f | while read -r file; do
+                      relative_path=$(echo "$file" | sed -E 's|merged-updates/[^/]+/||');
+                      mkdir -p "$(dirname "$relative_path")";
+                      cp "$file" "$relative_path";
+                      echo "Copied $file to $relative_path";
+                    done
+                  fi
+                done
+              `);
+            
+              // 5. Clean up temporary directory
+              console.log('Cleaning up temporary directory...');
+              await execAsync('rm -rf merged-updates');
+            
+              // 6. Commit and push changes
+              console.log('Committing changes...');
+            
+              // Initialize git-lfs and ensure files are tracked
+              try {
+                await execAsync('git lfs install');
+                console.log('Git LFS initialized.');
+            
+                // Fetch and pull any existing LFS files
+                await execAsync('git lfs fetch');
+                await execAsync('git lfs pull');
+                console.log('LFS files fetched and pulled.');
+              } catch (lfsError) {
+                console.log('LFS setup failed or not needed:', lfsError.message);
+              }
+
+              // Add the PNG files - they'll now be tracked by LFS due to .gitattributes
+              await execAsync('git add test/visual/**/*.png');
+            
+              try {
+                await execAsync('git commit -m "chore: update all visual snapshots"');
+                console.log('Changes committed.');
+                core.setOutput('changes-committed', 'true');
+              } catch (commitError) {
+                console.log('No changes to commit.', commitError);
+                core.setOutput('pull-request-number', null);
+                core.setOutput('changes-committed', 'false');
+                return;
+              }
+            
+              console.log('Pushing fresh branch...');
+              await execAsync(`git push origin ${PR_BRANCH_NAME}`);
+            
+              // 7. Create new PR (always create a fresh one since we cleaned up first)
+              console.log('Creating fresh PR...');
+              const { data: pr } = await github.rest.pulls.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: '[skip ci] chore: update all visual snapshots',
+                body: ':test_tube: Auto-PR to update all visual snapshots.\n\nThis PR contains only the latest snapshot changes from this workflow run.',
+                head: PR_BRANCH_NAME,
+                base: 'main'
+              });
+            
+              const prNumber = pr.number;
+              console.log(`Created fresh PR #${prNumber}: ${pr.html_url}`);
+            
+              // Add labels
+              await github.rest.issues.addLabels({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: prNumber,
+                labels: ['visual-regression']
+              });
+            
+              // Set the PR number output
+              core.setOutput('pull-request-number', prNumber);
+            
+            } catch (error) {
+              console.error(`Error in PR management: ${error.message}`);
+              core.setFailed(`Failed in PR process: ${error.message}`);
+            }
+
+  notify-slack:
+    name: 'Notify Slack'
+    runs-on: ubuntu-latest
+    needs: [ merge-updates, merge-reports ]
+    if: needs.merge-updates.outputs.changes_committed == 'true'
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Get user email
+        id: user-email
+        run: |
+          EMAIL=$(git log -1 --pretty=format:'%ae')
+          echo "USER_EMAIL=$EMAIL" >> $GITHUB_ENV
+
+      - name: 'Find Slack user'
+        id: slack-user
+        uses: slackapi/slack-github-action@v2.1.1
+        with:
+          method: users.lookupByEmail
+          token: ${{ secrets.SLACK_BOT_TOKEN }}
+          payload: |
+            {
+              "email": "${{ env.USER_EMAIL }}"
+            }
+
+      - name: 'Extract Slack user ID'
+        if: ${{ steps.slack-user.outputs.ok }}
+        run: |
+          SLACK_USER_ID=$(echo '${{ steps.slack-user.outputs.response }}' | jq -r '.user.id')
+          echo "SLACK_USER_ID=$SLACK_USER_ID" >> $GITHUB_ENV
+
+      - name: 'Send Slack notification'
+        uses: slackapi/slack-github-action@v2.1.1
+        with:
+          method: chat.postMessage
+          token: ${{ secrets.SLACK_BOT_TOKEN }}
+          payload: |
+            {
+              "channel": "${{ vars.SLACK_CHANNEL_ID }}",
+              "text": "🔍 Visual regression test snapshots changed! Please review PR #${{ needs.merge-updates.outputs.pr_number }}",
+              "blocks": [
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": ":warning: *Visual Regression Test Snapshots Changed*\n\nVisual test snapshots have been updated and need review!"
+                  }
+                },
+                {
+                  "type": "section",
+                  "fields": [
+                    {
+                      "type": "mrkdwn",
+                      "text": "*Started by:*\n ${{github.actor}}"
+                    },
+                    {
+                      "type": "mrkdwn",
+                      "text": "*Change made by:*\n<@${{ env.SLACK_USER_ID }}>"
+                    },
+                    {
+                      "type": "mrkdwn",
+                      "text": "*Repository:*\n<https://github.com/${{ github.repository }}|${{ github.repository }}>"
+                    }
+                  ]
+                },
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": "*PR with snapshot changes:*\n<https://github.com/${{ github.repository }}/pull/${{ needs.merge-updates.outputs.pr_number }}|:eyes: View Pull Request #${{ needs.merge-updates.outputs.pr_number }}>"
+                  }
+                },
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": "*HTML Report:*\n<https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}|:bar_chart: Download HTML Report from Artifacts>"
+                  }
+                },
+                {
+                  "type": "context",
+                  "elements": [
+                    {
+                      "type": "mrkdwn",
+                      "text": ":pushpin: Please review the visual changes and merge the PR if they are expected. Download the HTML report artifact from the Action run page."
+                    }
+                  ]
+                }
+              ]
+            }

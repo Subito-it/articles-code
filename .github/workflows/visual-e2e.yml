@@ -1,0 +1,17 @@
+name: 'Visual Regression Test'
+
+permissions:
+  contents: write
+  pull-requests: write
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  run-visual-e2e:
+    name: Run E2E Visual Regression Tests
+    uses: ./.github/workflows/visual-regression-analysis.yml
