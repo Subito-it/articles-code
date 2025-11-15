@@ -1,8 +1,8 @@
 import { defineConfig, devices } from '@playwright/test';
 
 export default defineConfig({
-    outputDir: './test/output/results',
-    testDir: './test',
+    outputDir: './test/visual/output/results',
+    testDir: './test/visual',
     retries: 2,
     use: {
         screenshot: 'only-on-failure',

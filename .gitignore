@@ -1,4 +1,2 @@
 visual-regression-example/playwright-report/*
 .idea
-visual-regression-example/test/a11y/output/login-page-desktop.json
-visual-regression-example/test/output
