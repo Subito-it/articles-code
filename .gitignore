@@ -2,3 +2,4 @@ visual-regression-example/playwright-report/*
 .idea
 a11y-example/playwright-report
 a11y-example/test/a11y/output
+a11y-example/test/output
