@@ -1,0 +1,197 @@
+name: "Accessibility Tests and Issue Management"
+
+concurrency:
+  group: ${{ github.repository }}-${{ github.workflow }}
+  cancel-in-progress: true
+
+on:
+  workflow_call:
+    inputs:
+      machine-tag-for-test:
+        description: "The tag of the machine size to use for the tests (e.g. size/medium, size/big)"
+        required: false
+        type: string
+        default: size/medium
+
+jobs:
+  get-version:
+    name: "Get Playwright version"
+    runs-on: [ "size/small" ]
+    outputs:
+      version: ${{ steps.playwright-version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v6
+      - name: "Get installed Playwright version"
+        id: "playwright-version"
+        run: echo "version=$(cat ./package.json | jq '.devDependencies."@playwright/test"' | sed -e 's/^\"//' -e 's/\"$//')" >> $GITHUB_OUTPUT
+
+  a11y-test:
+    needs: [get-version]
+    name: "Accessibility Test"
+    runs-on: ${{ inputs.machine-tag-for-test || 'size/medium' }}
+
+    container:
+      image: mcr.microsoft.com/playwright:v${{ needs.get-version.outputs.version }}-jammy
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "24.x"
+          cache: "npm"
+          token: ${{ secrets.EXTERNAL_GITHUB_TOKEN }}
+
+      - name: "Install dependencies"
+        run: npm ci --quiet --no-audit --no-fund
+
+      - name: "Run Accessibility tests"
+        run: npm run test:a11y:stage
+        env:
+          TEST_TYPE: a11y
+
+      - name: "Install jq"
+        if: ( success() || failure() )
+        run: apt-get update && apt-get install -y jq
+
+      - name: "Generate Accessibility Report"
+        if: ( success() || failure() )
+        shell: bash
+        run: |
+          OUTPUT_DIR="test/a11y/output"
+          MARKDOWN_PATH="$OUTPUT_DIR/accessibility-report.md"
+
+          echo "# Accessibility Report" > "$MARKDOWN_PATH"
+          echo "" >> "$MARKDOWN_PATH"
+          echo "Date: $(date '+%m/%d/%Y')" >> "$MARKDOWN_PATH"
+          echo "" >> "$MARKDOWN_PATH"
+
+          for FILE in "$OUTPUT_DIR"/*.json; do
+              if [ -f "$FILE" ]; then
+                  FILENAME=$(basename "$FILE" .json)
+                  TOTAL_COUNT=$(jq '. | length' "$FILE")
+                  CRITICAL_COUNT=$(jq '[.[] | select(.impact == "critical")] | length' "$FILE")
+                  SERIOUS_COUNT=$(jq '[.[] | select(.impact == "serious")] | length' "$FILE")
+                  MODERATE_COUNT=$(jq '[.[] | select(.impact == "moderate")] | length' "$FILE")
+                  MINOR_COUNT=$(jq '[.[] | select(.impact == "minor")] | length' "$FILE")
+
+                  if [ "$TOTAL_COUNT" -eq 0 ]; then
+                    EMOJI="✅"
+                  else
+                    EMOJI="❌"
+                  fi
+
+                  echo "<details>" >> "$MARKDOWN_PATH"
+                  echo "<summary><h2>$EMOJI $FILENAME</h2> ($TOTAL_COUNT issues) <hr /></summary>" >> "$MARKDOWN_PATH"
+                  echo "" >> "$MARKDOWN_PATH"
+
+                  echo "### Summary" >> "$MARKDOWN_PATH"
+                  echo "" >> "$MARKDOWN_PATH"
+
+                  echo "| Severity | Count |" >> "$MARKDOWN_PATH"
+                  echo "|----------|-------|" >> "$MARKDOWN_PATH"
+                  echo "| Total    | $TOTAL_COUNT |" >> "$MARKDOWN_PATH"
+                  echo "| Critical | $CRITICAL_COUNT |" >> "$MARKDOWN_PATH"
+                  echo "| Serious  | $SERIOUS_COUNT |" >> "$MARKDOWN_PATH"
+                  echo "| Moderate | $MODERATE_COUNT |" >> "$MARKDOWN_PATH"
+                  echo "| Minor    | $MINOR_COUNT |" >> "$MARKDOWN_PATH"
+                  echo "" >> "$MARKDOWN_PATH"
+
+                  for IMPACT in "critical" "serious" "moderate" "minor"; do
+                      IMPACT_COUNT=$(jq "[.[] | select(.impact == \"$IMPACT\")] | length" "$FILE")
+                      if [ "$IMPACT_COUNT" -gt 0 ]; then
+                          IMPACT_UPPER="$(tr '[:lower:]' '[:upper:]' <<< ${IMPACT:0:1})${IMPACT:1}"
+                          echo "### $IMPACT_UPPER Issues" >> "$MARKDOWN_PATH"
+                          echo "" >> "$MARKDOWN_PATH"
+
+                          jq -c ".[] | select(.impact == \"$IMPACT\")" "$FILE" | while read -r VIOLATION; do
+                              ID=$(echo "$VIOLATION" | jq -r '.id')
+                              DESCRIPTION=$(echo "$VIOLATION" | jq -r '.description')
+                              HELP=$(echo "$VIOLATION" | jq -r '.help')
+                              HELP_URL=$(echo "$VIOLATION" | jq -r '.helpUrl')
+
+                              echo "#### $ID" >> "$MARKDOWN_PATH"
+                              echo "" >> "$MARKDOWN_PATH"
+                              echo "| Field            | Value |" >> "$MARKDOWN_PATH"
+                              echo "|-------------------|-------|" >> "$MARKDOWN_PATH"
+                              echo "| **Description**   | $DESCRIPTION |" >> "$MARKDOWN_PATH"
+                              echo "| **Help**          | $HELP |" >> "$MARKDOWN_PATH"
+                              echo "| **Documentation** | [$HELP_URL]($HELP_URL) |" >> "$MARKDOWN_PATH"
+                              echo "" >> "$MARKDOWN_PATH"
+                              echo "##### Problematic Elements" >> "$MARKDOWN_PATH"
+                              echo "" >> "$MARKDOWN_PATH"
+                              echo "| Selector | HTML Snippet | Issue Summary |" >> "$MARKDOWN_PATH"
+                              echo "|----------|--------------|---------------|" >> "$MARKDOWN_PATH"
+
+                              NODES_COUNT=$(echo "$VIOLATION" | jq '.nodes | length')
+                              MAX_NODES=$NODES_COUNT
+
+                              for ((i=0; i<$MAX_NODES; i++)); do
+                                  NODE=$(echo "$VIOLATION" | jq -r ".nodes[$i]")
+                                  HTML=$(echo "$NODE" | jq -r '.html' | tr '\n' ' ' | sed 's/|/\\|/g')
+                                  TARGETS=$(echo "$NODE" | jq -r '.target | join(", ")' | sed 's/|/\\|/g')
+                                  FAILURE=$(echo "$NODE" | jq -r '.failureSummary' | tr '\n' ' ' | sed 's/|/\\|/g')
+
+                                  echo "| \`$TARGETS\` | \`$HTML\` | \`$FAILURE\` |" >> "$MARKDOWN_PATH"
+                              done                          
+          
+                              echo "" >> "$MARKDOWN_PATH"
+                              echo "---" >> "$MARKDOWN_PATH"
+                              echo "" >> "$MARKDOWN_PATH"
+                          done
+                      fi
+                  done
+
+                  echo "</details>" >> "$MARKDOWN_PATH"
+                  echo "" >> "$MARKDOWN_PATH"
+              fi
+          done
+
+          echo "Accessibility report generated at $MARKDOWN_PATH"
+
+      - name: Create or Update Accessibility Issue via GitHub API
+        if: ( success() || failure() )
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const fs = require('fs');
+            const path = './test/a11y/output/accessibility-report.md';
+            const body = fs.readFileSync(path, 'utf8');
+            const title = "Accessibility Report";
+            
+            const issues = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open",
+              labels: "accessibility,automated-report",
+            });
+            
+            const existingIssue = issues.data.find(issue => issue.title === title);
+            
+            if (existingIssue) {
+              console.log(`Updating existing issue #${existingIssue.number}`);
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: existingIssue.number,
+                body: body
+              });
+            } else {
+              console.log("Creating new issue");
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: title,
+                body: body,
+                labels: ["accessibility", "automated-report"]
+              });
+            }
+
+      - name: "Upload Accessibility Report as Artifact"
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: accessibility-report
+          path: ./test/a11y/output/accessibility-report.md
+          retention-days: 1
