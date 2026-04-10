@@ -1,0 +1,13 @@
+{
+  "name": "icons",
+  "version": "1.4.0",
+  "scripts": {
+    "generate:icons": "svgr --out-dir generated svg",
+    "prebuild": "npm run generate:icons"
+  },
+  "devDependencies": {
+    "@svgr/cli": "^8.1.0",
+    "@svgr/plugin-jsx": "^8.1.0",
+    "@svgr/plugin-svgo": "^8.1.0"
+  }
+}
