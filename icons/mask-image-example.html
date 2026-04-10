@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Icon with mask-image</title>
+    <style>
+      body {
+        font-family: sans-serif;
+        padding: 2rem;
+        display: flex;
+        flex-direction: column;
+        gap: 2rem;
+      }
+
+      .icon {
+        display: inline-block;
+        width: 24px;
+        height: 24px;
+        background-color: currentColor;
+        mask-image: url("https://assets.subito.it/static/icons/badges/star.svg");
+        mask-repeat: no-repeat;
+        mask-size: contain;
+        mask-position: center;
+      }
+
+      .example {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+      }
+
+      .icon--gold {
+        color: #f5a623;
+      }
+
+      .icon--blue {
+        color: #0057b8;
+      }
+
+      .icon--large {
+        width: 48px;
+        height: 48px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Icon via <code>mask-image</code></h1>
+
+    <section aria-label="Icon examples">
+      <div class="example">
+        <span
+          class="icon icon--gold"
+          role="img"
+          aria-label="Star"
+        ></span>
+        <span>Gold star (24px)</span>
+      </div>
+
+      <div class="example">
+        <span
+          class="icon icon--blue"
+          role="img"
+          aria-label="Star"
+        ></span>
+        <span>Blue star (24px)</span>
+      </div>
+
+      <div class="example">
+        <span
+          class="icon icon--gold icon--large"
+          role="img"
+          aria-label="Star"
+        ></span>
+        <span>Gold star (48px)</span>
+      </div>
+    </section>
+  </body>
+</html>
