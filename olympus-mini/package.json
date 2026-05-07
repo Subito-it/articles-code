@@ -1,0 +1,11 @@
+{
+  "name": "olympus-demo",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "start": "./start.sh app-search app-ads app-profile"
+  },
+  "dependencies": {
+    "http-proxy": "^1.18.1"
+  }
+}

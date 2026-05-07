@@ -1,0 +1,8 @@
+{
+  "name": "app-ads",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "dev": "node server.js"
+  }
+}
