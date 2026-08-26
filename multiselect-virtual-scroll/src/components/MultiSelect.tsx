@@ -33,7 +33,7 @@ export const MultiSelect = ({
   );
 
   // Ref keeps the latest internalSelected without forcing handleToggle to
-  // change identity on every toggle (PR #6016, fix #1).
+  // change identity on every toggle.
   const internalSelectedRef = useRef(internalSelected);
   internalSelectedRef.current = internalSelected;
 
@@ -42,8 +42,8 @@ export const MultiSelect = ({
       const next = toggleOption(id, internalSelectedRef.current);
       setInternalSelected(next);
 
-      // PR #6016, fix #2: the O(options) derived-value walk + the public
-      // callback are deferred — not urgent for the checkbox to flip visually.
+      // The O(options) derived-value walk + the public callback are
+      // deferred — not urgent for the checkbox to flip visually.
       startTransition(() => {
         onSelectionChange?.(computeMultiSelectValue(next, options));
       });

@@ -16,9 +16,8 @@ export type MultiSelectValue = {
   selectedOptions: OptionNode[];
 };
 
-// Deliberately an O(options) walk, same shape as the real
-// `computeMultiSelectValue` — this is the "heavy number crunching" PR #6016
-// moved out of the synchronous click handler via `startTransition`.
+// Deliberately an O(options) walk — the "heavy number crunching" moved
+// out of the synchronous click handler via `startTransition`.
 export const computeMultiSelectValue = (
   selected: Set<string>,
   options: OptionNode[]
