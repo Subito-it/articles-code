@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "author": "Alessandro Grosselle",
+  "author": "Subito",
   "license": "UNLICENSED",
   "scripts": {
     "dev": "vite",
