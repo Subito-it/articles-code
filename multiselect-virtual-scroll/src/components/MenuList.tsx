@@ -1,11 +1,3 @@
-// Port of packages/components/ui/src/FormElements/MultiSelect/partials/MenuList.tsx
-//
-// In the real component, MenuList's only actual props are `children` and
-// `maxHeight` (everything else it needs — searchTerm, hasResults, labels —
-// comes from `useMultiSelect()` context, same as Option). That's exactly
-// why the PR #6016 memo comparator only needs to check child *count* and
-// `maxHeight`: any other change that should trigger a re-render already
-// goes through the context subscription, bypassing memo entirely.
 import { Children, memo, type CSSProperties, type ReactNode } from 'react';
 import { useMultiSelect } from '../context';
 import { useVirtualScroll } from '../hooks/useVirtualScroll';

@@ -1,5 +1,3 @@
-/* Port of MenuList.module.scss (post PR #6012 restructuring). */
-
 .menuList {
   display: flex;
   flex-direction: column;

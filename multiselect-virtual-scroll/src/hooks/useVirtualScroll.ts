@@ -1,6 +1,3 @@
-// Faithful port of a real-world useVirtualScroll hook. Same params, same
-// state shape, same window/overscan math, same rAF-batched scroll handler
-// as the real fix
 import {
   Children,
   useCallback,

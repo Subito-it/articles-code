@@ -1,10 +1,3 @@
-// Port of packages/components/ui/src/FormElements/MultiSelect/partials/Option.tsx
-// Simplified (plain checkbox instead of the design system's Radix checkbox,
-// no group/indeterminate state) but keeps the real memoization strategy from
-// PR #6016: the comparator only checks `node` identity. `checked` is read
-// from context inside the component, not passed as a prop — so a toggle
-// elsewhere in the list doesn't change this Option's props and doesn't
-// defeat the memo.
 import { memo, type KeyboardEventHandler, type MouseEventHandler } from 'react';
 import { useMultiSelect } from '../context';
 

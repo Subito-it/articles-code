@@ -1,6 +1,3 @@
-// Simplified port of packages/components/ui/src/FormElements/MultiSelect/utils.ts
-// Flat-list only (no group/children nodes) — enough to demonstrate the
-// O(options) cost that PR #6016 moved into `startTransition`.
 import type { OptionNode } from './components/Option';
 
 export const toggleOption = (id: string, selected: Set<string>): Set<string> => {
